@@ -1,0 +1,3 @@
+[console_scripts]
+ont_alignment = ont_alignment.cli:cli
+
