@@ -29,7 +29,7 @@ process MiniMap{
   memory '6 GB'
 
   input:
-    tuple val(reference_fa), path(fastq)
+    tuple path(fastq), path(reference_fa)
   output:
     path "sorted.bam"
   script:
@@ -64,8 +64,7 @@ process MarkDuplicates{
   input:
     path(bam)
   output:
-    path "duplicates_marked.bam"
-    path "duplicates_marked.bam.bai"
+    tuple path("duplicates_marked.bam"), path("duplicates_marked.bam.bai")
   script:
     """
         picard -Xmx4G -Xms4G MarkDuplicates \
@@ -82,6 +81,21 @@ process MarkDuplicates{
 }
 
 
+process MapulaCount{
+  time '1h'
+  memory '6 GB'
+
+  input:
+    tuple path(bam), path(bai), path(reference)
+  output:
+    path "mapula_count.csv"
+  script:
+    """
+      mapula count ${bam}  -r ${reference} -n mapula_count
+    """
+}
+
+
 
 workflow {
 
@@ -89,6 +103,10 @@ workflow {
             | map { tuple( it, params.reads_per_split ) }
             | set { sample_fastq_file }
 
-    SplitFastq(sample_fastq_file) | flatten | map { tuple( params.reference_fa, it )} | MiniMap | collect | MergeBams | MarkDuplicates
+    Channel.fromPath( params.reference_fa) | set {reference_ch}
+    Channel.fromPath( params.reference_fa) | set {reference_ch_2}
+
+
+    SplitFastq(sample_fastq_file) | flatten | combine(reference_ch) | MiniMap | collect | MergeBams | MarkDuplicates | combine(reference_ch) | MapulaCount
 
 }
