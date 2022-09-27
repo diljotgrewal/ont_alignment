@@ -2,14 +2,16 @@
 nextflow.enable.dsl=2
 
 // Script parameters
-params.fastq = "/data/sample.fastq.gz"
+params.samplesheet = "/data/sample.csv"
 params.reference_fa = "data/GRCh38_full_analysis_set_plus_decoy_hla.fa"
-params.alignment_threads = 8
+params.threads = 8
 params.merge_threads = 8
 params.reads_per_split = 1000
+params.min_qual = 10
+params.min_length = 10000
 
 process SplitFastq {
-    time '1h'
+    time '24h'
     memory '2 GB'
 
   input:
@@ -24,12 +26,12 @@ process SplitFastq {
 
 
 process MiniMap{
-  cpus params.alignment_threads
-  time '1h'
+  cpus params.threads
+  time '6h'
   memory '6 GB'
 
   input:
-    tuple path(fastq), path(reference_fa)
+    tuple val(sample_id), val(lane_id), path(fastq), path(reference_fa)
   output:
     path "sorted.bam"
   script:
@@ -41,9 +43,9 @@ process MiniMap{
 }
 
 process MergeBams{
-  cpus params.alignment_threads
-  time '1h'
-  memory '6 GB'
+  cpus params.merge_threads
+  time '96h'
+  memory '16 GB'
 
   input:
     path(bams, stageAs: "?/*")
@@ -58,8 +60,8 @@ process MergeBams{
 
 
 process MarkDuplicates{
-  time '1h'
-  memory '6 GB'
+  time '48h'
+  memory '16 GB'
 
   input:
     path(bam)
@@ -82,8 +84,8 @@ process MarkDuplicates{
 
 
 process MapulaCount{
-  time '1h'
-  memory '6 GB'
+  time '48h'
+  memory '16 GB'
 
   input:
     tuple path(bam), path(bai), path(reference)
@@ -95,18 +97,40 @@ process MapulaCount{
     """
 }
 
+process NanoPlot{
+  time '48h'
+  memory '16 GB'
+  cpus params.threads
 
+  input:
+    tuple path(bam), path(bai), val(min_qual), val(min_length)
+  output:
+    path "tempdir/nanoplot_NanoPlot-report.html"
+  script:
+    """
+      NanoPlot --bam ${bam} --maxlength 40000 -o tempdir --prefix nanoplot_ -t $task.cpus --minqual $min_qual --minlength $min_length
+    """
+
+
+}
 
 workflow {
-
-    Channel.fromPath( params.fastq )
-            | map { tuple( it, params.reads_per_split ) }
-            | set { sample_fastq_file }
-
     Channel.fromPath( params.reference_fa) | set {reference_ch}
-    Channel.fromPath( params.reference_fa) | set {reference_ch_2}
+
+    Channel
+        .fromPath( params.samplesheet )
+        .splitCsv( header: true, sep: ',' )
+        .map { row -> tuple( row.sample_id, row.lane_id, file(row.fastq)) }
+        .combine(reference_ch)
+        .set{sample_fastq_ch}
+
+    MiniMap(sample_fastq_ch) | collect | MergeBams | MarkDuplicates | set{bam_ch}
+
+    bam_ch | combine([params.min_qual]) | combine([params.min_length]) | NanoPlot
+
+    bam_ch | combine(reference_ch) | MapulaCount
 
 
-    SplitFastq(sample_fastq_file) | flatten | combine(reference_ch) | MiniMap | collect | MergeBams | MarkDuplicates | combine(reference_ch) | MapulaCount
+
 
 }
