@@ -152,3 +152,19 @@ def split_fastq(in_filename, outdir, reads_per_split=1e7):
         finally:
             if out_file is not None:
                 out_file.close()
+
+
+def merge_unmapped_stats(stats_files, merged_data):
+    with open(merged_data, 'wt') as writer:
+
+        header = None
+        for infile in stats_files:
+            with open(infile, 'rt') as reader:
+                if header is None:
+                    header = reader.readline()
+                    assert header.startswith('read_id')
+                    writer.write(header)
+                else:
+                    assert header == reader.readline()
+                for line in reader:
+                    writer.write(line)

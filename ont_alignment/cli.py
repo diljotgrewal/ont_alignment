@@ -29,3 +29,12 @@ def merge_bams(
         bam, output, tempdir, ncores=8
 ):
     utils.merge_bams(bam, output, tempdir, ncores=ncores)
+
+
+@cli.command()
+@click.option('--stats_files', multiple=True, required=True, help='fastq file')
+@click.option('--output', required=True, help='fastq file')
+def merge_unmapped_stats(
+        stats_files, output
+):
+    utils.merge_unmapped_stats(stats_files, output)

@@ -28,7 +28,7 @@ process SplitFastq {
 process MiniMap{
   cpus params.threads
   time '6h'
-  memory '6 GB'
+  memory '16 GB'
 
   input:
     tuple val(sample_id), val(lane_id), path(fastq), path(reference_fa)
@@ -42,6 +42,23 @@ process MiniMap{
     """
 }
 
+process UnmappedStats{
+  time '6h'
+  memory '16 GB'
+
+  input:
+    path(sorted_bam)
+  output:
+    path "unmapped_stats.csv"
+  script:
+    """
+      bamtools split -in ${sorted_bam} -mapped
+      bedtools bamtofastq -i *UNMAPPED.bam -fq temp.unmapped.fq
+      fastcat -s temp.unmapped.fq -r unmapped_stats.csv -x temp.unmapped.fq >> temp.uncompressed.fastq
+    """
+}
+
+
 process MergeBams{
   cpus params.merge_threads
   time '96h'
@@ -50,10 +67,11 @@ process MergeBams{
   input:
     path(bams, stageAs: "?/*")
   output:
-    path "merged.bam"
+    tuple path("merged.bam"), path("merged.bam.bai")
   script:
     """
         ont_alignment merge-bams --output merged.bam --tempdir temp --ncores $task.cpus --bam ${bams.join(' --bam ')}
+        samtools index merged.bam
     """
 
 }
@@ -83,17 +101,32 @@ process MarkDuplicates{
 }
 
 
+process MapulaMerge{
+  time '48h'
+  memory '16 GB'
+
+  input:
+    path(mapula_json, stageAs: "?/*")
+  output:
+    path "merged_mapula.json"
+  script:
+    """
+      mapula merge $mapula_json -f all -n merged_mapula
+    """
+}
+
+
 process MapulaCount{
   time '48h'
   memory '16 GB'
 
   input:
-    tuple path(bam), path(bai), path(reference)
+    tuple path(bam), path(reference)
   output:
-    path "mapula_count.csv"
+    path "mapula_count.json"
   script:
     """
-      mapula count ${bam}  -r ${reference} -n mapula_count
+      mapula count ${bam}  -r ${reference} -n mapula_count -f json
     """
 }
 
@@ -114,23 +147,76 @@ process NanoPlot{
 
 }
 
-workflow {
-    Channel.fromPath( params.reference_fa) | set {reference_ch}
 
-    Channel
-        .fromPath( params.samplesheet )
-        .splitCsv( header: true, sep: ',' )
-        .map { row -> tuple( row.sample_id, row.lane_id, file(row.fastq)) }
-        .combine(reference_ch)
-        .set{sample_fastq_ch}
-
-    MiniMap(sample_fastq_ch) | collect | MergeBams | MarkDuplicates | set{bam_ch}
-
-    bam_ch | combine([params.min_qual]) | combine([params.min_length]) | NanoPlot
-
-    bam_ch | combine(reference_ch) | MapulaCount
+process MergeUnmappedStats{
+  time '48h'
+  memory '16 GB'
+  input:
+    path(stats, stageAs: "?/*")
+  output:
+    path "merged_stats.csv"
+  script:
+    """
+      ont_alignment merge_unmapped_stats --stats ${stats.join(' --stats ')} --output merged_stats.csv
+    """
+}
 
 
 
+workflow align {
+    take:
+        reference_ch
+        sample_sheet_ch
+
+    main:
+
+        sample_sheet_ch
+        | splitCsv( header: true, sep: ',' )
+        | map { row -> tuple( row.sample_id, row.lane_id, file(row.fastq)) }
+        | combine(reference_ch)
+        | set{sample_fastq_ch}
+
+        MiniMap(sample_fastq_ch) | set {aligned_bams}
+
+        aligned_bams | UnmappedStats | collect | MergeUnmappedStats
+
+        aligned_bams | combine(reference_ch) | MapulaCount | set{mapula_jsons}
+
+        aligned_bams | collect | MergeBams
+
+        mapula_jsons | collect | MapulaMerge
+
+    emit:
+        MergeBams.out
+
+}
+
+workflow postprocess_filter {
+
+    take:
+        bam_ch
+    main:
+        bam_ch | combine([params.min_qual]) | combine([params.min_length]) | NanoPlot
+
+}
+
+workflow postprocess {
+
+    take:
+        bam_ch
+    main:
+        bam_ch | combine([0]) | combine([0]) | NanoPlot
+
+}
+
+
+workflow{
+        Channel.fromPath( params.reference_fa) | set {reference_ch}
+        Channel.fromPath( params.samplesheet) | set {samplesheet_ch}
+
+        align(reference_ch, samplesheet_ch)
+
+        postprocess(align.out)
+        postprocess_filter(align.out)
 
 }
