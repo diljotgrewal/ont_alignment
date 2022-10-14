@@ -177,7 +177,7 @@ process AlignmentReport{
 }
 
 
-process bam_fastqc{
+process BamFastqc{
   time '48h'
   memory '16 GB'
   cpus params.threads
@@ -217,7 +217,7 @@ workflow align {
 
         mapula_json_merged | combine(unmapped_stats_merged) | combine(reference_ch) | combine(["SA123"]) | AlignmentReport
 
-        bamfile | bam_fastqc
+        bamfile | BamFastqc
 
     emit:
         MergeBams.out
