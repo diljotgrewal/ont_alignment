@@ -1,7 +1,7 @@
 """Console script for csverve."""
 
 import click
-
+from ont_alignment import report
 from ont_alignment import utils
 
 
@@ -38,3 +38,17 @@ def merge_unmapped_stats(
         stats_files, output
 ):
     utils.merge_unmapped_stats(stats_files, output)
+
+
+@cli.command()
+@click.option('--mapula_json', required=True, help='fastq file')
+@click.option('--report_html', required=True, help='fastq file')
+@click.option('--reference', required=True, help='fastq file')
+@click.option('--sample_name', required=True, help='fastq file')
+@click.option('--unmapped_stats', required=True, help='fastq file')
+def plot_alignment_report(
+        mapula_json, report_html, reference, sample_name, unmapped_stats
+):
+    report.plot_report(
+        mapula_json, report_html, reference, sample_name, unmapped_stats
+    )

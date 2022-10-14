@@ -157,10 +157,39 @@ process MergeUnmappedStats{
     path "merged_stats.csv"
   script:
     """
-      ont_alignment merge_unmapped_stats --stats ${stats.join(' --stats ')} --output merged_stats.csv
+      ont_alignment merge-unmapped-stats --stats_files ${stats.join(' --stats_files ')} --output merged_stats.csv
     """
 }
 
+
+process AlignmentReport{
+  time '48h'
+  memory '16 GB'
+  input:
+    tuple file(mapula_json), file(unmapped_stats), file(reference), val(sample_name)
+  output:
+    path('alignment_report.html')
+  script:
+    """
+    ont_alignment plot-alignment-report --mapula_json ${mapula_json} --report_html alignment_report.html \
+      --reference ${reference}  --sample_name ${sample_name} --unmapped_stats ${unmapped_stats}
+    """
+}
+
+
+process bam_fastqc{
+  time '48h'
+  memory '16 GB'
+  cpus params.threads
+  input:
+    tuple file(bam), file(bai)
+  output:
+    path('fastqc.html')
+  script:
+    """
+      fastqc --threads $task.cpus ${bam}
+    """
+}
 
 
 workflow align {
@@ -178,13 +207,17 @@ workflow align {
 
         MiniMap(sample_fastq_ch) | set {aligned_bams}
 
-        aligned_bams | UnmappedStats | collect | MergeUnmappedStats
+        aligned_bams | UnmappedStats | collect | MergeUnmappedStats | set {unmapped_stats_merged}
 
         aligned_bams | combine(reference_ch) | MapulaCount | set{mapula_jsons}
 
-        aligned_bams | collect | MergeBams
+        aligned_bams | collect | MergeBams | set {bamfile}
 
-        mapula_jsons | collect | MapulaMerge
+        mapula_jsons | collect | MapulaMerge | set {mapula_json_merged}
+
+        mapula_json_merged | combine(unmapped_stats_merged) | combine(reference_ch) | combine(["SA123"]) | AlignmentReport
+
+        bamfile | bam_fastqc
 
     emit:
         MergeBams.out
