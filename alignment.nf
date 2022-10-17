@@ -138,7 +138,8 @@ process NanoPlot{
   input:
     tuple path(bam), path(bai), val(min_qual), val(min_length)
   output:
-    path "tempdir/nanoplot_NanoPlot-report.html"
+    path "tempdir/nanoplot_NanoPlot-report.html", emit: html
+    path "tempdir/nanoplot_NanoStats.txt", emit: stats
   script:
     """
       NanoPlot --bam ${bam} --maxlength 40000 -o tempdir --prefix nanoplot_ -t $task.cpus --minqual $min_qual --minlength $min_length
@@ -180,15 +181,62 @@ process AlignmentReport{
 process BamFastqc{
   time '48h'
   memory '16 GB'
-  cpus params.threads
   input:
     tuple file(bam), file(bai)
   output:
-    path('fastqc.html')
+    path('output/*fastqc.html'), emit: fastqc_html
+    path('output/*fastqc.zip'), emit: fastqc_zip
   script:
     """
-      fastqc --threads $task.cpus ${bam}
+      mkdir output
+      fastqc --threads 1 -f bam -o output ${bam}
     """
+}
+
+process SamtoolsFlagstat{
+  time '48h'
+  memory '16 GB'
+  input:
+    tuple file(bam), file(bai)
+  output:
+    path('flagstat.txt')
+  script:
+    """
+      samtools flagstat ${bam} > flagstat.txt
+    """
+}
+
+
+
+process MultiQc{
+  time '48h'
+  memory '16 GB'
+  input:
+    file(fastqc_zip)
+    file(nanoplot_html)
+    file(flagstat)
+  output:
+    path('output/multiqc.html')
+  script:
+    """
+      mkdir output
+      multiqc -o output -n multiqc .
+    """
+
+}
+
+process IgvtoolsCount{
+  time '48h'
+  memory '16 GB'
+  input:
+    tuple file(bam), file(reference)
+  output:
+    file("merged.bam.tdf")
+  script:
+    """
+      igvtools count ${bam} merged.bam.tdf ${reference}
+    """
+
 }
 
 
@@ -217,28 +265,18 @@ workflow align {
 
         mapula_json_merged | combine(unmapped_stats_merged) | combine(reference_ch) | combine(["SA123"]) | AlignmentReport
 
+        bamfile | combine([0]) | combine([0]) | NanoPlot
+
+        bamfile | combine(reference_ch) | IgvtoolsCount
+
         bamfile | BamFastqc
+
+        bamfile | SamtoolsFlagstat
+
+        MultiQc(BamFastqc.out.fastqc_zip, NanoPlot.out.stats, SamtoolsFlagstat.out)
 
     emit:
         MergeBams.out
-
-}
-
-workflow postprocess_filter {
-
-    take:
-        bam_ch
-    main:
-        bam_ch | combine([params.min_qual]) | combine([params.min_length]) | NanoPlot
-
-}
-
-workflow postprocess {
-
-    take:
-        bam_ch
-    main:
-        bam_ch | combine([0]) | combine([0]) | NanoPlot
 
 }
 
